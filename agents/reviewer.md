@@ -140,10 +140,13 @@ Every item is a potential block. Items marked ⚡ are highest priority — secur
 
 ### 7. Observability
 
+Tracing levels: `error!` = broken invariant / data loss; `warn!` = unexpected but recoverable / fallback triggered; `info!` = normal significant events; `debug!` = dev-time detail; `trace!` = fine-grained.
+
 - [ ] New async I/O operations instrumented with `#[tracing::instrument]`
 - [ ] Sensitive arguments excluded with `skip(...)`
 - [ ] Structured log fields: `url = %url` not `"url: {url}"`
-- [ ] Error paths emit `tracing::error!` with structured fields
+- [ ] ⚡ **Silent fallbacks are observable** — every `unwrap_or_else`/`unwrap_or`/`ok()` that discards an error MUST emit `tracing::warn!` or `tracing::error!` before returning the fallback. Silent fallback = invisible failure.
+- [ ] Error/warn paths use structured key=value fields, not format strings
 
 ---
 
