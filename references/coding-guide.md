@@ -181,6 +181,54 @@ let m = i32::try_from(n)?;  // returns Err on overflow — correct
 
 ---
 
+## Security
+
+### `user_id` in every WHERE clause — never trust the ID alone
+
+> **Every query that touches user-owned data must filter by both the record ID and `user_id`. Fetching by record ID alone is an IDOR vulnerability.**
+
+IDOR (Insecure Direct Object Reference) is the most common multi-user data isolation bug. When a handler receives an `article_id` from a caller, that ID comes from outside the trust boundary — the caller could supply any ID, including one belonging to another user.
+
+**The rule:** Any `SELECT`, `UPDATE`, or `DELETE` on a user-owned row must include `AND user_id = ?` alongside the primary key.
+
+```sql
+-- Wrong — fetches the article regardless of who owns it:
+SELECT * FROM articles WHERE id = ?
+
+-- Correct — returns None if the article doesn't belong to this user:
+SELECT * FROM articles WHERE id = ? AND user_id = ?
+```
+
+```rust
+// Wrong — returns McpError::ArticleNotFound for a missing row,
+// but also for a row owned by a different user — correct error, wrong reason:
+pub async fn get_article(pool: &Pool, user_id: i64, input: GetArticleInput) -> McpResult<GetArticleOutput> {
+    let row = sqlx::query!("SELECT * FROM articles WHERE id = ?", input.article_id)
+        .fetch_optional(pool).await?
+        .ok_or(McpError::ArticleNotFound(input.article_id))?;
+    // ...
+}
+
+// Correct — user_id is part of the lookup predicate, not just a log field:
+pub async fn get_article(pool: &Pool, user_id: i64, input: GetArticleInput) -> McpResult<GetArticleOutput> {
+    let row = sqlx::query!(
+        "SELECT * FROM articles WHERE id = ? AND user_id = ?",
+        input.article_id, user_id
+    )
+    .fetch_optional(pool).await?
+    .ok_or(McpError::ArticleNotFound(input.article_id))?;
+    // ...
+}
+```
+
+**Why the error message is safe either way:** returning `ArticleNotFound` when the article exists but belongs to another user is correct — it leaks no information about other users' data. Do not return a distinct "forbidden" error for cross-user lookups — that would confirm the record exists.
+
+**Highest-risk operations:** mutations (`UPDATE`, `DELETE`) and reads of sensitive fields. A read leak is bad; a write across user boundaries is a data integrity violation.
+
+*Source: `/reviewer --ride-along` Session 03, meridian-mcp `tools.rs` review*
+
+---
+
 ## Privacy
 
 ### Privacy-as-types
@@ -237,5 +285,5 @@ Any call that takes more than ~100µs without an `.await` blocks the entire toki
 
 ---
 
-*Canonical location: `dotfiles/claude/references/coding-guide.md`. This copy is mirrored here for reviewer skill access.*
+*This guide is maintained in `dotfiles/claude/references/coding-guide.md` (canonical) and mirrored to `saldistefano/claude-skills/references/coding-guide.md`.*
 *Add new principles with: source context, the wrong pattern, the correct pattern, and the rule stated plainly.*
