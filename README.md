@@ -1,4 +1,4 @@
-# claude-agents
+# claude-skills
 
 Reusable Claude Code slash command agents for managing software projects.
 Each agent is a persona with a defined role, decision authority, and context loading strategy.
@@ -75,6 +75,8 @@ structure, edit the "Context I Load on Startup" section of each agent file.
 - **Agents are project-agnostic** — edit the context-loading section for your project structure.
 
 ## References
+
+**`references/coding-guide.md`** is a mirror of the canonical file at `dotfiles/claude/references/coding-guide.md`. When adding new principles, edit dotfiles first, then sync here.
 
 The `/reviewer` agent checklist is backed by primary research. See [`references/reviewer-references.md`](references/reviewer-references.md) for the full annotated source list covering:
 
