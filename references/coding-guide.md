@@ -237,5 +237,5 @@ Any call that takes more than ~100µs without an `.await` blocks the entire toki
 
 ---
 
-*This guide is maintained in `saldistefano/claude-skills/references/coding-guide.md`.*
+*Canonical location: `dotfiles/claude/references/coding-guide.md`. This copy is mirrored here for reviewer skill access.*
 *Add new principles with: source context, the wrong pattern, the correct pattern, and the rule stated plainly.*
