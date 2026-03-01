@@ -227,6 +227,44 @@ pub async fn get_article(pool: &Pool, user_id: i64, input: GetArticleInput) -> M
 
 *Source: `/reviewer --ride-along` Session 03, meridian-mcp `tools.rs` review*
 
+### Parse and validate at the system boundary — don't let raw input reach the query layer
+
+> **Untrusted strings must be parsed into typed values at the handler boundary. If parsing fails, return an error immediately. Never pass a raw string into a query or business logic.**
+
+Any value that arrives from outside the process (API input, MCP tool arguments, config files, env vars) is untrusted until validated. The correct place to reject malformed input is at the entry point — the handler. If a raw string reaches the query layer, the query layer must now defend itself, and often can't.
+
+```rust
+// Wrong — raw string reaches the query; DB may receive garbage or panic on parse:
+pub async fn get_unread(pool: &Pool, user_id: i64, input: GetUnreadInput) -> McpResult<GetUnreadOutput> {
+    let rows = sqlx::query!(
+        "SELECT * FROM articles WHERE published_at > ?",
+        input.since  // Option<String> — could be anything
+    ).fetch_all(pool).await?;
+}
+
+// Correct — parse at the boundary, reject early, typed value reaches the query:
+pub async fn get_unread(pool: &Pool, user_id: i64, input: GetUnreadInput) -> McpResult<GetUnreadOutput> {
+    let since: Option<DateTime<Utc>> = input.since
+        .as_deref()
+        .map(|s| DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|_| McpError::InvalidInput(format!("invalid timestamp: {s}"))))
+        .transpose()?;
+
+    // `since` is now Option<DateTime<Utc>> — the query layer receives a typed value
+}
+```
+
+**The boundary rule:** Validate at entry points (API handlers, MCP tool handlers, CLI argument parsers). Internal functions receive typed values and may `expect()` their invariants. External input never gets that trust.
+
+Common cases:
+- ISO 8601 / RFC 3339 timestamps → `DateTime<Utc>` via `DateTime::parse_from_rfc3339`
+- URLs → `url::Url::parse()`
+- Integers from strings → `str::parse::<i64>()`
+- Enums from strings → implement `TryFrom<&str>` and call at the boundary
+
+*Source: `/reviewer --ride-along` Session 03, meridian-mcp `tools.rs` review*
+
 ---
 
 ## Privacy
