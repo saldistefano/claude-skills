@@ -227,6 +227,60 @@ pub async fn get_article(pool: &Pool, user_id: i64, input: GetArticleInput) -> M
 
 *Source: `/reviewer --ride-along` Session 03, meridian-mcp `tools.rs` review*
 
+### SSRF — validate URLs before making outbound HTTP requests
+
+> **Never pass a user-supplied URL directly to an HTTP client. Validate the scheme and reject private/loopback IP ranges before the request is made.**
+
+SSRF (Server-Side Request Forgery) lets an attacker use your server as a proxy to reach internal infrastructure. A user-supplied URL like `http://169.254.169.254/latest/meta-data/` (AWS instance metadata), `http://localhost:6379/` (Redis), or `http://10.0.0.1/admin` reaches internal services that are not publicly accessible — but are reachable from within the server's network.
+
+**Risk varies by deployment:**
+- **Single-user desktop app**: low risk — the user supplying the URL is the same person running the server. They can already access localhost directly.
+- **Hosted multi-tenant server**: high risk — one user can probe the internal network of the server, exfiltrate cloud credentials, or attack other services.
+
+**The rule:** Validate at the `add_feed` / URL-acceptance boundary, before the URL reaches any HTTP client. Do not validate inside the fetcher — by then the URL has already been trusted and stored.
+
+```rust
+// Wrong — raw user input goes directly to the HTTP client:
+pub async fn add_feed(pool: &Pool, user_id: i64, input: AddFeedInput) -> McpResult<AddFeedOutput> {
+    let result = fetcher.fetch(&input.url, None, None).await?;
+    // ...
+}
+
+// Correct — validate at the boundary; typed Url reaches the fetcher:
+pub async fn add_feed(pool: &Pool, user_id: i64, input: AddFeedInput) -> McpResult<AddFeedOutput> {
+    let url = Url::parse(&input.url)
+        .map_err(|_| McpError::InvalidInput("invalid URL".to_string()))?;
+
+    // Reject non-HTTP(S) schemes
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(McpError::InvalidInput("only http and https URLs are allowed".to_string()));
+    }
+
+    // On the hosted server: reject private/loopback ranges
+    #[cfg(feature = "backend-postgres")]
+    validate_not_private_ip(&url)?;
+
+    let result = fetcher.fetch(url.as_str(), None, None).await?;
+    // ...
+}
+
+fn validate_not_private_ip(url: &Url) -> Result<(), McpError> {
+    use std::net::IpAddr;
+    if let Some(host) = url.host_str() {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
+                return Err(McpError::InvalidInput("private IP addresses are not allowed".to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+**Note:** DNS rebinding can bypass IP checks done before the request — a hostname can resolve to a public IP at validation time and a private IP at fetch time. For a hardened server deployment, use a dedicated egress proxy (e.g. Smokescreen) instead of in-process IP validation.
+
+*Source: `/reviewer --ride-along` Session 03, meridian-fetcher `fetcher.rs` + `discovery.rs` review*
+
 ### Parse and validate at the system boundary — don't let raw input reach the query layer
 
 > **Untrusted strings must be parsed into typed values at the handler boundary. If parsing fails, return an error immediately. Never pass a raw string into a query or business logic.**
